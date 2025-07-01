@@ -1,0 +1,58 @@
+CREATE OR ALTER PROCEDURE dbo.CalculateAccountChecksums
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -------------------------------------------------------
+    -- Step 1: Drop and Recreate Target Table Efficiently
+    -------------------------------------------------------
+    IF OBJECT_ID('Staging.dbo.ChecksumResult', 'U') IS NOT NULL
+        DROP TABLE Staging.dbo.ChecksumResult;
+
+    CREATE TABLE Staging.dbo.ChecksumResult (
+        AccountNumber VARCHAR(11) NOT NULL PRIMARY KEY,
+        RawChecksum TINYINT,
+        FinalChecksum SMALLINT
+    );
+
+    -------------------------------------------------------
+    -- Step 2: Efficient Checksum Calculation and Insertion
+    -------------------------------------------------------
+    INSERT INTO Staging.dbo.ChecksumResult (AccountNumber, RawChecksum, FinalChecksum)
+    SELECT
+        A.AccountNumber,
+        C.RawChecksum,
+        C.FinalChecksum
+    FROM Staging.dbo.NewAccountNumbers AS A
+    CROSS APPLY (
+        SELECT 
+            CAST(SUBSTRING(A.AccountNumber, 1, 1) AS INT) * 2048 +
+            CAST(SUBSTRING(A.AccountNumber, 2, 1) AS INT) * 1024 +
+            CAST(SUBSTRING(A.AccountNumber, 3, 1) AS INT) * 512  +
+            CAST(SUBSTRING(A.AccountNumber, 4, 1) AS INT) * 256  +
+            CAST(SUBSTRING(A.AccountNumber, 5, 1) AS INT) * 128  +
+            CAST(SUBSTRING(A.AccountNumber, 6, 1) AS INT) * 64   +
+            CAST(SUBSTRING(A.AccountNumber, 7, 1) AS INT) * 32   +
+            CAST(SUBSTRING(A.AccountNumber, 8, 1) AS INT) * 16   +
+            CAST(SUBSTRING(A.AccountNumber, 9, 1) AS INT) * 8    +
+            CAST(SUBSTRING(A.AccountNumber, 10, 1) AS INT) * 4   +
+            CAST(SUBSTRING(A.AccountNumber, 11, 1) AS INT) * 2
+        AS Total
+    ) AS B
+    CROSS APPLY (
+        SELECT 
+            B.Total % 11 AS RawChecksum,
+            CASE 
+                WHEN B.Total % 11 = 1 THEN -1
+                WHEN B.Total % 11 <> 0 THEN 11 - (B.Total % 11)
+                ELSE 0
+            END AS FinalChecksum
+    ) AS C
+    WHERE 
+        A.AccountNumber LIKE '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'  -- Fast pattern check
+        AND LEN(A.AccountNumber) = 11;
+END;
+GO
+
+--To EXECUTE
+exec dbo.CalculateAccountChecksums
